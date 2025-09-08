@@ -17,7 +17,8 @@ import {
   createTask,
   updateTask,
   deleteBoard, // ✅ new
-  deleteTask, // ✅ new
+  deleteTask,
+  addList, // ✅ new
 } from "../../api/api";
 import TaskModal from "../../components/TaskModal";
 
@@ -141,6 +142,26 @@ function Dashboard() {
   const [modalOpen, setModalOpen] = useState(false);
   const [modalCol, setModalCol] = useState(null);
   const [editingTask, setEditingTask] = useState(null);
+  const [lists, setLists] = useState([]);
+  const [tasksByList, setTasksByList] = useState({});
+  const [newListName, setNewListName] = useState("");
+  const [modalList, setModalList] = useState(null); // NEW
+
+  useEffect(() => {
+    if (activeBoard) {
+      setLists(activeBoard.lists || []);
+      fetchTasks(activeBoard._id);
+    }
+  }, [activeBoard]);
+
+  function getStatusForList(listId) {
+    const list = lists.find((l) => l._id === listId);
+    if (!list) return undefined;
+    // Map list name to status
+    if (list.name.toLowerCase().includes("progress")) return "In Progress";
+    if (list.name.toLowerCase().includes("done")) return "Done";
+    return "To Do";
+  }
 
   const [columns, setColumns] = useState({
     todo: [],
@@ -151,12 +172,6 @@ function Dashboard() {
   useEffect(() => {
     fetchBoards();
   }, []);
-
-  useEffect(() => {
-    if (activeBoard) {
-      fetchTasks(activeBoard._id);
-    }
-  }, [activeBoard]);
 
   // fetch boards
   const fetchBoards = async () => {
@@ -172,16 +187,18 @@ function Dashboard() {
   // fetch tasks
   const fetchTasks = async (boardId) => {
     try {
-      const data = await getTasks(boardId); // returns { todo, progress, done }
-
-      setColumns({
-        todo: data.todo || [],
-        progress: data.progress || [],
-        done: data.done || [],
-      });
+      const data = await getTasks(boardId);
+      setTasksByList(data);
     } catch (err) {
       console.error("Error fetching tasks:", err);
     }
+  };
+
+  const handleAddList = async () => {
+    if (!newListName.trim() || !activeBoard) return;
+    const newList = await addList(activeBoard._id, newListName);
+    setLists([...lists, newList]);
+    setNewListName("");
   };
 
   // create new board
@@ -215,17 +232,12 @@ function Dashboard() {
   const moveCard = async (cardId, fromCol, toCol) => {
     if (!activeBoard) return;
     try {
-      // Map column key to status string
-      const statusMap = {
-        todo: "To Do",
-        progress: "In Progress",
-        done: "Done",
-      };
-      const newStatus = statusMap[toCol];
-
-      // Only update if status is different
-      if (statusMap[fromCol] !== newStatus) {
-        await updateTask(activeBoard._id, cardId, { status: newStatus });
+      if (fromCol !== toCol) {
+        const newStatus = getStatusForList(toCol);
+        await updateTask(activeBoard._id, cardId, {
+          listId: toCol,
+          status: newStatus,
+        });
         await fetchTasks(activeBoard._id);
       }
     } catch (error) {
@@ -244,10 +256,11 @@ function Dashboard() {
     }
   };
 
-  // open modal
-  const openTaskModal = (col) => {
-    setModalCol(col);
-    setEditingTask(null); // reset if adding
+  const openTaskModal = (listId) => {
+    // Find the list object by id
+    const listObj = lists.find((l) => l._id === listId);
+    setModalList(listObj || null);
+    setEditingTask(null);
     setModalOpen(true);
   };
 
@@ -266,17 +279,19 @@ function Dashboard() {
   const handleSaveTask = async (taskData) => {
     if (!activeBoard) return;
     try {
+      const payload = {
+        ...taskData,
+        listId: editingTask ? editingTask.listId : modalList._id, // use correct listId
+      };
       if (editingTask) {
-        await updateTask(activeBoard._id, editingTask._id, taskData);
+        await updateTask(activeBoard._id, editingTask._id, payload);
       } else {
-        await createTask(activeBoard._id, taskData);
+        await createTask(activeBoard._id, payload);
       }
-
-      // refetch all tasks for this board
       await fetchTasks(activeBoard._id);
-
       setModalOpen(false);
       setEditingTask(null);
+      setModalList(null); // reset
     } catch (err) {
       console.error("Error saving task:", err);
     }
@@ -345,16 +360,19 @@ function Dashboard() {
 
             {/* Columns */}
             <div className="flex items-start gap-4 w-max">
-              <Column
-                title="To Do"
-                cards={columns.todo}
-                moveCard={moveCard}
-                onAddCard={openTaskModal}
-                col="todo"
-                onDeleteTask={handleDeleteTask}
-                onEditTask={openEditModal}
-              />
-
+              {lists.map((list) => (
+                <Column
+                  key={list._id}
+                  title={list.name}
+                  cards={tasksByList[list._id] || []}
+                  moveCard={moveCard}
+                  onAddCard={openTaskModal}
+                  col={list._id}
+                  onDeleteTask={handleDeleteTask}
+                  onEditTask={openEditModal}
+                />
+              ))}
+              {/* 
               <Column
                 title="In Progress"
                 cards={columns.progress}
@@ -370,12 +388,22 @@ function Dashboard() {
                 onAddCard={openTaskModal}
                 col="done"
                 onDeleteTask={handleDeleteTask}
-              />
+              /> */}
 
-              <div className="w-72 bg-gray-200 rounded-md shadow flex items-center justify-center cursor-pointer hover:bg-gray-300">
-                <span className="text-gray-700 font-medium">
+              <div className="w-72 bg-gray-200 rounded-md shadow flex flex-col items-center justify-center p-4">
+                <input
+                  type="text"
+                  value={newListName}
+                  onChange={(e) => setNewListName(e.target.value)}
+                  placeholder="List name"
+                  className="mb-2 px-2 py-1 rounded border w-full"
+                />
+                <button
+                  onClick={handleAddList}
+                  className="bg-blue-600 text-white px-3 py-1 rounded w-full"
+                >
                   + Add another list
-                </span>
+                </button>
               </div>
             </div>
           </div>
@@ -391,13 +419,7 @@ function Dashboard() {
         isOpen={modalOpen}
         onClose={() => setModalOpen(false)}
         onSave={handleSaveTask}
-        defaultStatus={
-          modalCol === "todo"
-            ? "To Do"
-            : modalCol === "progress"
-            ? "In Progress"
-            : "Done"
-        }
+        defaultStatus="To Do"
         task={editingTask}
       />
     </div>

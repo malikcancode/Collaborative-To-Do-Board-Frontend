@@ -153,3 +153,20 @@ export const deleteTask = async (boardId, taskId) => {
     throw error.response?.data || { message: "Task deletion failed" };
   }
 };
+
+export const addList = async (boardId, name) => {
+  const response = await axios.post(
+    `${API_BASE}/boards/${boardId}/lists`,
+    { name },
+    { headers: getAuthHeader() }
+  );
+  return response.data;
+};
+
+export const deleteList = async (boardId, listId) => {
+  const response = await axios.delete(
+    `${API_BASE}/boards/${boardId}/lists/${listId}`,
+    { headers: getAuthHeader() }
+  );
+  return response.data;
+};
