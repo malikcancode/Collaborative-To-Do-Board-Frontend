@@ -1,6 +1,6 @@
 import axios from "axios";
 
-const API_BASE = "http://localhost:3000/api";
+const API_BASE = "http://localhost:5000/api";
 
 // Helper: Get token from localStorage
 const getAuthHeader = () => {
@@ -163,10 +163,32 @@ export const addList = async (boardId, name) => {
   return response.data;
 };
 
+export const updateListsOrder = async (boardId, lists) => {
+  const response = await axios.put(
+    `${API_BASE}/boards/${boardId}/lists/order`,
+    { lists },
+    { headers: getAuthHeader() }
+  );
+  return response.data;
+};
+
 export const deleteList = async (boardId, listId) => {
   const response = await axios.delete(
     `${API_BASE}/boards/${boardId}/lists/${listId}`,
     { headers: getAuthHeader() }
   );
   return response.data;
+};
+
+export const inviteUser = async (boardId, userId) => {
+  try {
+    const response = await axios.post(
+      `${API_BASE}/boards/${boardId}/invite`,
+      { userId },
+      { headers: getAuthHeader() }
+    );
+    return response.data;
+  } catch (error) {
+    throw error.response?.data || { message: "User invitation failed" };
+  }
 };

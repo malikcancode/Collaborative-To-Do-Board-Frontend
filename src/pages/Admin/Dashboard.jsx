@@ -1,151 +1,66 @@
 import React, { useState, useEffect } from "react";
 import {
-  FaPlus,
-  FaUserCircle,
-  FaStar,
-  FaShareAlt,
-  FaBell,
-  FaCog,
-  FaEllipsisV,
-  FaTrash,
-} from "react-icons/fa";
-import { useDrag, useDrop } from "react-dnd";
-import {
   getBoards,
   createBoard,
   getTasks,
   createTask,
   updateTask,
-  deleteBoard, // ✅ new
+  deleteBoard,
   deleteTask,
-  addList, // ✅ new
+  addList,
+  inviteUser,
+  deleteList,
 } from "../../api/api";
 import TaskModal from "../../components/TaskModal";
+import Navbar from "../../components/Navbar";
+import Column from "../../components/Column";
+import BoardDropdown from "../../components/BoardDropdown";
+import io from "socket.io-client";
 
-const ItemTypes = {
-  CARD: "card",
-};
-
-// --- CARD ---
-function Card({ card, col, onDelete, onEdit }) {
-  const [{ isDragging }, drag] = useDrag(() => ({
-    type: ItemTypes.CARD,
-    item: { id: card._id, fromCol: col },
-    collect: (monitor) => ({
-      isDragging: monitor.isDragging(),
-    }),
-  }));
-
-  return (
-    <div
-      ref={drag}
-      className={`bg-gray-700 px-3 py-2 rounded-md shadow-sm cursor-pointer transition ${
-        isDragging ? "opacity-50" : ""
-      }`}
-    >
-      <div className="flex justify-between items-start">
-        <div>
-          <p className="text-sm font-medium">{card.title}</p>
-          <span className="text-xs text-gray-300">
-            {card.deadline
-              ? new Date(card.deadline).toLocaleDateString()
-              : "No deadline"}
-          </span>
-        </div>
-        <div className="flex gap-2">
-          <button
-            onClick={() => onEdit(card)}
-            className="text-blue-400 hover:text-blue-600 text-sm"
-          >
-            <FaCog />
-          </button>
-          <button
-            onClick={() => onDelete(card._id)}
-            className="text-red-400 hover:text-red-600 text-sm"
-          >
-            <FaTrash />
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// --- COLUMN ---
-function Column({
-  title,
-  cards,
-  moveCard,
-  col,
-  onAddCard,
-  onDeleteTask,
-  onEditTask,
-}) {
-  const [, drop] = useDrop(() => ({
-    accept: ItemTypes.CARD,
-    drop: (item) => {
-      // Only move if dropped into a different column
-      if (item.fromCol !== col) {
-        moveCard(item.id, item.fromCol, col); // Pass col as new column
-        item.fromCol = col; // Update the dragged item's column for future drags
-      }
-    },
-  }));
-
-  return (
-    <div
-      ref={drop}
-      className="w-72 bg-black/80 rounded-md shadow text-white flex flex-col"
-    >
-      <div className="flex justify-between items-center px-3 py-2">
-        <h2 className="font-semibold">{title}</h2>
-        <div className="flex gap-2 text-gray-400">
-          <FaStar className="cursor-pointer hover:text-yellow-400" />
-          <FaShareAlt className="cursor-pointer hover:text-blue-400" />
-        </div>
-      </div>
-
-      <div className="flex-1 px-3 pb-2 space-y-2 overflow-y-auto">
-        {cards.length > 0 ? (
-          cards.map((card) => (
-            <Card
-              key={card._id}
-              card={card}
-              col={col}
-              onDelete={onDeleteTask}
-              onEdit={onEditTask}
-            />
-          ))
-        ) : (
-          <p className="text-xs text-gray-400 italic">No tasks</p>
-        )}
-      </div>
-
-      <div className="px-3 pb-2">
-        <button
-          onClick={() => onAddCard(col)}
-          className="flex items-center gap-2 w-full px-2 py-1 text-sm rounded hover:bg-gray-700"
-        >
-          <FaPlus /> Add a card
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// --- DASHBOARD ---
 function Dashboard() {
   const [boards, setBoards] = useState([]);
   const [activeBoard, setActiveBoard] = useState(null);
   const [newBoardName, setNewBoardName] = useState("");
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
-  const [modalCol, setModalCol] = useState(null);
   const [editingTask, setEditingTask] = useState(null);
   const [lists, setLists] = useState([]);
   const [tasksByList, setTasksByList] = useState({});
   const [newListName, setNewListName] = useState("");
-  const [modalList, setModalList] = useState(null); // NEW
+  const [modalList, setModalList] = useState(null);
+  const [inviteEmail, setInviteEmail] = useState("");
+
+  const socket = io("http://localhost:5000", { withCredentials: true });
+
+  useEffect(() => {
+    if (activeBoard) {
+      socket.emit("joinBoard", activeBoard._id);
+
+      socket.on("taskChanged", ({ type, task, taskId }) => {
+        console.log("Socket update received:", { type, task, taskId });
+        if (type === "deleted" && taskId) {
+          // Remove the task from tasksByList state directly
+          setTasksByList((prev) => {
+            const updated = { ...prev };
+            Object.keys(updated).forEach((listId) => {
+              updated[listId] = updated[listId].filter((t) => t._id !== taskId);
+            });
+            return updated;
+          });
+        } else {
+          // For created/updated, refetch all tasks
+          fetchTasks(activeBoard._id);
+        }
+      });
+    }
+    return () => {
+      socket.off("taskChanged");
+    };
+  }, [activeBoard]);
+
+  useEffect(() => {
+    fetchBoards();
+  }, []);
 
   useEffect(() => {
     if (activeBoard) {
@@ -154,26 +69,6 @@ function Dashboard() {
     }
   }, [activeBoard]);
 
-  function getStatusForList(listId) {
-    const list = lists.find((l) => l._id === listId);
-    if (!list) return undefined;
-    // Map list name to status
-    if (list.name.toLowerCase().includes("progress")) return "In Progress";
-    if (list.name.toLowerCase().includes("done")) return "Done";
-    return "To Do";
-  }
-
-  const [columns, setColumns] = useState({
-    todo: [],
-    progress: [],
-    done: [],
-  });
-
-  useEffect(() => {
-    fetchBoards();
-  }, []);
-
-  // fetch boards
   const fetchBoards = async () => {
     try {
       const data = await getBoards();
@@ -184,7 +79,6 @@ function Dashboard() {
     }
   };
 
-  // fetch tasks
   const fetchTasks = async (boardId) => {
     try {
       const data = await getTasks(boardId);
@@ -194,14 +88,6 @@ function Dashboard() {
     }
   };
 
-  const handleAddList = async () => {
-    if (!newListName.trim() || !activeBoard) return;
-    const newList = await addList(activeBoard._id, newListName);
-    setLists([...lists, newList]);
-    setNewListName("");
-  };
-
-  // create new board
   const handleCreateBoard = async () => {
     if (!newBoardName.trim()) return;
     try {
@@ -214,7 +100,6 @@ function Dashboard() {
     }
   };
 
-  // delete board
   const handleDeleteBoard = async (boardId) => {
     try {
       await deleteBoard(boardId);
@@ -228,15 +113,16 @@ function Dashboard() {
     }
   };
 
-  // move card
   const moveCard = async (cardId, fromCol, toCol) => {
     if (!activeBoard) return;
     try {
       if (fromCol !== toCol) {
-        const newStatus = getStatusForList(toCol);
+        // Find the new position (e.g., at the end of the target list)
+        const newPosition = tasksByList[toCol]?.length || 0; // Place at the end
+
         await updateTask(activeBoard._id, cardId, {
           listId: toCol,
-          status: newStatus,
+          position: newPosition,
         });
         await fetchTasks(activeBoard._id);
       }
@@ -245,19 +131,22 @@ function Dashboard() {
     }
   };
 
-  // delete task
   const handleDeleteTask = async (taskId) => {
     if (!activeBoard) return;
     try {
       await deleteTask(activeBoard._id, taskId);
       await fetchTasks(activeBoard._id);
+      socket.emit("taskChanged", {
+        boardId: activeBoard._id,
+        type: "deleted",
+        taskId,
+      });
     } catch (err) {
       console.error("Error deleting task:", err);
     }
   };
 
   const openTaskModal = (listId) => {
-    // Find the list object by id
     const listObj = lists.find((l) => l._id === listId);
     setModalList(listObj || null);
     setEditingTask(null);
@@ -266,13 +155,6 @@ function Dashboard() {
 
   const openEditModal = (task) => {
     setEditingTask(task);
-    setModalCol(
-      task.status === "To Do"
-        ? "todo"
-        : task.status === "In Progress"
-        ? "progress"
-        : "done"
-    );
     setModalOpen(true);
   };
 
@@ -281,84 +163,88 @@ function Dashboard() {
     try {
       const payload = {
         ...taskData,
-        listId: editingTask ? editingTask.listId : modalList._id, // use correct listId
+        listId: editingTask ? editingTask.listId : modalList._id,
       };
       if (editingTask) {
-        await updateTask(activeBoard._id, editingTask._id, payload);
+        const updated = await updateTask(
+          activeBoard._id,
+          editingTask._id,
+          payload
+        );
+        socket.emit("taskChanged", {
+          boardId: activeBoard._id,
+          type: "updated",
+          task: updated,
+        });
       } else {
-        await createTask(activeBoard._id, payload);
+        const created = await createTask(activeBoard._id, payload);
+        socket.emit("taskChanged", {
+          boardId: activeBoard._id,
+          type: "created",
+          task: created,
+        });
       }
       await fetchTasks(activeBoard._id);
       setModalOpen(false);
       setEditingTask(null);
-      setModalList(null); // reset
+      setModalList(null);
     } catch (err) {
       console.error("Error saving task:", err);
     }
   };
 
+  const handleAddList = async () => {
+    if (!newListName.trim() || !activeBoard) return;
+    const newList = await addList(activeBoard._id, newListName);
+    setLists([...lists, newList]);
+    setNewListName("");
+  };
+
+  const handleInviteUser = async () => {
+    if (!activeBoard || !inviteEmail.trim()) return;
+
+    try {
+      // For now, if you are inviting by ID:
+      await inviteUser(activeBoard._id, inviteEmail);
+      alert("User invited successfully!");
+      setInviteEmail("");
+    } catch (err) {
+      console.error("Error inviting user:", err);
+      alert(err.message || "Failed to invite user");
+    }
+  };
+
+  const handleDeleteList = async (listId) => {
+    if (!activeBoard) return;
+    try {
+      await deleteList(activeBoard._id, listId);
+      setLists(lists.filter((l) => l._id !== listId));
+    } catch (err) {
+      console.error("Error deleting list:", err);
+    }
+  };
+
   return (
     <div className="h-screen flex flex-col bg-gray-100">
-      {/* Navbar */}
-      <header className="flex items-center justify-between px-6 py-3 bg-gray-900 text-white shadow">
-        <div className="flex items-center gap-2">
-          <span className="font-bold text-xl tracking-wide">MyTrello</span>
-        </div>
+      <Navbar
+        newBoardName={newBoardName}
+        setNewBoardName={setNewBoardName}
+        handleCreateBoard={handleCreateBoard}
+      />
 
-        <div className="flex-1 max-w-2xl mx-6 flex items-center gap-4">
-          <div className="flex items-center gap-2 bg-gray-800 rounded px-3 py-2 w-full">
-            <input
-              type="text"
-              value={newBoardName}
-              onChange={(e) => setNewBoardName(e.target.value)}
-              placeholder="Board name"
-              className="bg-transparent outline-none text-sm text-white placeholder-gray-400 w-full"
-            />
-          </div>
-          <button
-            onClick={handleCreateBoard}
-            className="flex whitespace-nowrap cursor-pointer items-center gap-2 bg-blue-600 px-4 py-2 rounded-md text-xs font-medium hover:bg-blue-700 transition"
-          >
-            <FaPlus /> Create Board
-          </button>
-        </div>
-
-        <div className="flex items-center gap-5">
-          <FaBell className="text-xl cursor-pointer hover:text-yellow-400" />
-          <FaCog className="text-xl cursor-pointer hover:text-blue-400" />
-          <FaUserCircle className="text-2xl cursor-pointer" />
-        </div>
-      </header>
-
-      {/* Board */}
       <main className="flex-1 p-4 bg-cover bg-center bg-blue-900 overflow-x-auto relative">
         {activeBoard ? (
           <div className="flex flex-col gap-6">
-            {/* Dropdown */}
-            <div className="relative inline-block">
-              <button
-                onClick={() => setDropdownOpen(!dropdownOpen)}
-                className="text-white text-2xl"
-              >
-                <FaEllipsisV />
-              </button>
+            <BoardDropdown
+              activeBoard={activeBoard}
+              dropdownOpen={dropdownOpen}
+              setDropdownOpen={setDropdownOpen}
+              handleDeleteBoard={handleDeleteBoard}
+              inviteEmail={inviteEmail}
+              setInviteEmail={setInviteEmail}
+              handleInviteUser={handleInviteUser}
+            />
 
-              {dropdownOpen && (
-                <div className="absolute mt-2 w-48 bg-white shadow-lg py-2 z-10">
-                  <p className="px-4 py-2 text-gray-700 uppercase font-semibold border-b">
-                    {activeBoard.name}
-                  </p>
-                  <button
-                    onClick={() => handleDeleteBoard(activeBoard._id)}
-                    className="w-full text-left cursor-pointer px-4 py-2 text-red-600 hover:bg-gray-100"
-                  >
-                    Delete Board
-                  </button>
-                </div>
-              )}
-            </div>
-
-            {/* Columns */}
             <div className="flex items-start gap-4 w-max">
               {lists.map((list) => (
                 <Column
@@ -370,25 +256,9 @@ function Dashboard() {
                   col={list._id}
                   onDeleteTask={handleDeleteTask}
                   onEditTask={openEditModal}
+                  onDeleteList={handleDeleteList}
                 />
               ))}
-              {/* 
-              <Column
-                title="In Progress"
-                cards={columns.progress}
-                moveCard={moveCard}
-                onAddCard={openTaskModal}
-                col="progress"
-                onDeleteTask={handleDeleteTask}
-              />
-              <Column
-                title="Done"
-                cards={columns.done}
-                moveCard={moveCard}
-                onAddCard={openTaskModal}
-                col="done"
-                onDeleteTask={handleDeleteTask}
-              /> */}
 
               <div className="w-72 bg-gray-200 rounded-md shadow flex flex-col items-center justify-center p-4">
                 <input
@@ -414,7 +284,6 @@ function Dashboard() {
         )}
       </main>
 
-      {/* Task Modal */}
       <TaskModal
         isOpen={modalOpen}
         onClose={() => setModalOpen(false)}
