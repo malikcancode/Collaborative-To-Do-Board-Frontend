@@ -15,7 +15,7 @@ import TaskModal from "../../components/TaskModal";
 import Navbar from "../../components/Navbar";
 import Column from "../../components/Column";
 import BoardDropdown from "../../components/BoardDropdown";
-import io from "socket.io-client";
+import socket from "../../api/socket";
 
 function Dashboard() {
   const [boards, setBoards] = useState([]);
@@ -29,32 +29,47 @@ function Dashboard() {
   const [newListName, setNewListName] = useState("");
   const [modalList, setModalList] = useState(null);
   const [inviteEmail, setInviteEmail] = useState("");
+  const [activeRole, setActiveRole] = useState("member");
 
-  const socket = io("http://localhost:5000", { withCredentials: true });
-
+  // Join board room when activeBoard changes
   useEffect(() => {
     if (activeBoard) {
       socket.emit("joinBoard", activeBoard._id);
+      setLists(activeBoard.lists || []);
+      fetchTasks(activeBoard._id);
 
-      socket.on("taskChanged", ({ type, task, taskId }) => {
-        console.log("Socket update received:", { type, task, taskId });
-        if (type === "deleted" && taskId) {
-          // Remove the task from tasksByList state directly
-          setTasksByList((prev) => {
-            const updated = { ...prev };
-            Object.keys(updated).forEach((listId) => {
-              updated[listId] = updated[listId].filter((t) => t._id !== taskId);
-            });
-            return updated;
-          });
-        } else {
-          // For created/updated, refetch all tasks
-          fetchTasks(activeBoard._id);
-        }
-      });
+      const userId = localStorage.getItem("userId");
+      if (activeBoard.owner && activeBoard.owner._id === userId) {
+        setActiveRole("admin");
+      } else if (activeBoard.members && Array.isArray(activeBoard.members)) {
+        const membership = activeBoard.members.find(
+          (m) => m.user._id === userId
+        );
+        setActiveRole(membership ? membership.role : "member");
+      } else {
+        setActiveRole("basic");
+      }
     }
+  }, [activeBoard]);
+
+  // Socket listeners for real-time updates
+  useEffect(() => {
+    const handleTaskChanged = ({ type, task, taskId }) => {
+      console.log("Task event received:", type, task, taskId);
+      if (activeBoard) fetchTasks(activeBoard._id);
+    };
+
+    const handleListChanged = ({ type, list, listId }) => {
+      console.log("List event received:", type, list, listId);
+      if (activeBoard) fetchBoards();
+    };
+
+    socket.on("taskChanged", handleTaskChanged);
+    socket.on("listChanged", handleListChanged);
+
     return () => {
-      socket.off("taskChanged");
+      socket.off("taskChanged", handleTaskChanged);
+      socket.off("listChanged", handleListChanged);
     };
   }, [activeBoard]);
 
@@ -62,18 +77,23 @@ function Dashboard() {
     fetchBoards();
   }, []);
 
-  useEffect(() => {
-    if (activeBoard) {
-      setLists(activeBoard.lists || []);
-      fetchTasks(activeBoard._id);
-    }
-  }, [activeBoard]);
-
   const fetchBoards = async () => {
     try {
       const data = await getBoards();
       setBoards(data);
-      if (data.length > 0) setActiveBoard(data[0]);
+
+      const userId = localStorage.getItem("userId");
+      if (data.length > 0) {
+        setActiveBoard(data[0]);
+        if (data[0].members && Array.isArray(data[0].members)) {
+          const membership = data[0].members.find((m) => m.user._id === userId);
+          setActiveRole(membership ? membership.role : "basic");
+        } else {
+          setActiveRole("basic");
+        }
+      } else {
+        setActiveRole("basic");
+      }
     } catch (err) {
       console.error("Error fetching boards:", err);
     }
@@ -117,12 +137,16 @@ function Dashboard() {
     if (!activeBoard) return;
     try {
       if (fromCol !== toCol) {
-        // Find the new position (e.g., at the end of the target list)
-        const newPosition = tasksByList[toCol]?.length || 0; // Place at the end
-
+        const newPosition = tasksByList[toCol]?.length || 0;
         await updateTask(activeBoard._id, cardId, {
           listId: toCol,
           position: newPosition,
+        });
+        // emit so others see update
+        socket.emit("taskChanged", {
+          boardId: activeBoard._id,
+          type: "updated",
+          taskId: cardId,
         });
         await fetchTasks(activeBoard._id);
       }
@@ -135,12 +159,12 @@ function Dashboard() {
     if (!activeBoard) return;
     try {
       await deleteTask(activeBoard._id, taskId);
-      await fetchTasks(activeBoard._id);
       socket.emit("taskChanged", {
         boardId: activeBoard._id,
         type: "deleted",
         taskId,
       });
+      await fetchTasks(activeBoard._id);
     } catch (err) {
       console.error("Error deleting task:", err);
     }
@@ -202,9 +226,7 @@ function Dashboard() {
 
   const handleInviteUser = async () => {
     if (!activeBoard || !inviteEmail.trim()) return;
-
     try {
-      // For now, if you are inviting by ID:
       await inviteUser(activeBoard._id, inviteEmail);
       alert("User invited successfully!");
       setInviteEmail("");
@@ -230,6 +252,7 @@ function Dashboard() {
         newBoardName={newBoardName}
         setNewBoardName={setNewBoardName}
         handleCreateBoard={handleCreateBoard}
+        isAdmin={activeRole === "admin" || activeRole === "basic"}
       />
 
       <main className="flex-1 p-4 bg-cover bg-center bg-blue-900 overflow-x-auto relative">
@@ -243,6 +266,7 @@ function Dashboard() {
               inviteEmail={inviteEmail}
               setInviteEmail={setInviteEmail}
               handleInviteUser={handleInviteUser}
+              isAdmin={activeRole === "admin"}
             />
 
             <div className="flex items-start gap-4 w-max">
@@ -260,21 +284,23 @@ function Dashboard() {
                 />
               ))}
 
-              <div className="w-72 bg-gray-200 rounded-md shadow flex flex-col items-center justify-center p-4">
-                <input
-                  type="text"
-                  value={newListName}
-                  onChange={(e) => setNewListName(e.target.value)}
-                  placeholder="List name"
-                  className="mb-2 px-2 py-1 rounded border w-full"
-                />
-                <button
-                  onClick={handleAddList}
-                  className="bg-blue-600 text-white px-3 py-1 rounded w-full"
-                >
-                  + Add another list
-                </button>
-              </div>
+              {(activeRole === "admin" || activeRole === "basic") && (
+                <div className="w-72 bg-gray-200 rounded-md shadow flex flex-col items-center justify-center p-4">
+                  <input
+                    type="text"
+                    value={newListName}
+                    onChange={(e) => setNewListName(e.target.value)}
+                    placeholder="List name"
+                    className="mb-2 px-2 py-1 rounded border w-full"
+                  />
+                  <button
+                    onClick={handleAddList}
+                    className="bg-blue-600 text-white px-3 py-1 rounded w-full"
+                  >
+                    + Add another list
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         ) : (

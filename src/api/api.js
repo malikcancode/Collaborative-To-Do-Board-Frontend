@@ -180,11 +180,11 @@ export const deleteList = async (boardId, listId) => {
   return response.data;
 };
 
-export const inviteUser = async (boardId, userId) => {
+export const inviteUser = async (boardId, email) => {
   try {
     const response = await axios.post(
       `${API_BASE}/boards/${boardId}/invite`,
-      { userId },
+      { email },
       { headers: getAuthHeader() }
     );
     return response.data;
