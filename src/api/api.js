@@ -25,9 +25,26 @@ export const loginUser = async (credentials) => {
   try {
     const response = await axios.post(`${API_BASE}/auth/login`, credentials);
 
-    // Save token in localStorage after login
     if (response.data.token) {
       localStorage.setItem("token", response.data.token);
+    }
+
+    if (
+      response.data.user &&
+      (response.data.user._id || response.data.user.id)
+    ) {
+      localStorage.setItem(
+        "userId",
+        response.data.user._id || response.data.user.id
+      );
+    } else if (response.data.token && !localStorage.getItem("userId")) {
+      try {
+        const payload = JSON.parse(atob(response.data.token.split(".")[1]));
+        const id = payload.id || payload.sub || payload.userId || payload.uid;
+        if (id) localStorage.setItem("userId", id);
+      } catch (e) {
+        // ignore decode errors
+      }
     }
 
     return response.data;
@@ -191,4 +208,19 @@ export const inviteUser = async (boardId, email) => {
   } catch (error) {
     throw error.response?.data || { message: "User invitation failed" };
   }
+};
+
+export const removeUser = async (boardId, userId) => {
+  const response = await axios.delete(`${API_BASE}/boards/${boardId}/remove`, {
+    data: { userId }, // send in request body
+    headers: getAuthHeader(),
+  });
+  return response.data;
+};
+
+export const exitBoard = async (boardId) => {
+  const response = await axios.delete(`${API_BASE}/boards/${boardId}/exit`, {
+    headers: getAuthHeader(),
+  });
+  return response.data;
 };

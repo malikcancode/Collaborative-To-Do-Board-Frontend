@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect } from "react";
 import { useDrag } from "react-dnd";
 import { FaCog, FaTrash } from "react-icons/fa";
 
@@ -12,6 +12,12 @@ function Card({ card, col, onDelete, onEdit }) {
       isDragging: monitor.isDragging(),
     }),
   }));
+
+  useEffect(() => {
+    if (isDragging) {
+      console.log("Dragging card:", card._id, "from column:", col);
+    }
+  }, [isDragging]);
 
   return (
     <div

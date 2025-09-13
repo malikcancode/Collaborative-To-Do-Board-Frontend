@@ -1,15 +1,17 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import {
   getBoards,
-  createBoard,
   getTasks,
   createTask,
   updateTask,
-  deleteBoard,
   deleteTask,
   addList,
-  inviteUser,
   deleteList,
+  createBoard,
+  getBoard,
+  exitBoard,
+  inviteUser,
+  deleteBoard,
 } from "../../api/api";
 import TaskModal from "../../components/TaskModal";
 import Navbar from "../../components/Navbar";
@@ -20,159 +22,201 @@ import socket from "../../api/socket";
 function Dashboard() {
   const [boards, setBoards] = useState([]);
   const [activeBoard, setActiveBoard] = useState(null);
-  const [newBoardName, setNewBoardName] = useState("");
-  const [dropdownOpen, setDropdownOpen] = useState(false);
-  const [modalOpen, setModalOpen] = useState(false);
-  const [editingTask, setEditingTask] = useState(null);
   const [lists, setLists] = useState([]);
   const [tasksByList, setTasksByList] = useState({});
-  const [newListName, setNewListName] = useState("");
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editingTask, setEditingTask] = useState(null);
   const [modalList, setModalList] = useState(null);
+  const [newBoardName, setNewBoardName] = useState("");
+  const [newListName, setNewListName] = useState("");
   const [inviteEmail, setInviteEmail] = useState("");
   const [activeRole, setActiveRole] = useState("member");
 
-  // Join board room when activeBoard changes
-  useEffect(() => {
-    if (activeBoard) {
-      socket.emit("joinBoard", activeBoard._id);
-      setLists(activeBoard.lists || []);
-      fetchTasks(activeBoard._id);
+  const getMemberId = (m) =>
+    m?.user?._id ? m.user._id.toString() : m.user?.toString();
 
-      const userId = localStorage.getItem("userId");
-      if (activeBoard.owner && activeBoard.owner._id === userId) {
-        setActiveRole("admin");
-      } else if (activeBoard.members && Array.isArray(activeBoard.members)) {
-        const membership = activeBoard.members.find(
-          (m) => m.user._id === userId
-        );
-        setActiveRole(membership ? membership.role : "member");
-      } else {
-        setActiveRole("basic");
-      }
-    }
-  }, [activeBoard]);
-
-  // Socket listeners for real-time updates
-  useEffect(() => {
-    const handleTaskChanged = ({ type, task, taskId }) => {
-      console.log("Task event received:", type, task, taskId);
-      if (activeBoard) fetchTasks(activeBoard._id);
-    };
-
-    const handleListChanged = ({ type, list, listId }) => {
-      console.log("List event received:", type, list, listId);
-      if (activeBoard) fetchBoards();
-    };
-
-    socket.on("taskChanged", handleTaskChanged);
-    socket.on("listChanged", handleListChanged);
-
-    return () => {
-      socket.off("taskChanged", handleTaskChanged);
-      socket.off("listChanged", handleListChanged);
-    };
-  }, [activeBoard]);
-
-  useEffect(() => {
-    fetchBoards();
-  }, []);
-
-  const fetchBoards = async () => {
+  const fetchBoards = useCallback(async () => {
     try {
       const data = await getBoards();
       setBoards(data);
-
-      const userId = localStorage.getItem("userId");
       if (data.length > 0) {
         setActiveBoard(data[0]);
-        if (data[0].members && Array.isArray(data[0].members)) {
-          const membership = data[0].members.find((m) => m.user._id === userId);
-          setActiveRole(membership ? membership.role : "basic");
-        } else {
-          setActiveRole("basic");
-        }
-      } else {
-        setActiveRole("basic");
+        const userId = localStorage.getItem("userId");
+        const membership = data[0].members?.find(
+          (m) => getMemberId(m) === userId
+        );
+        setActiveRole(membership?.role || "member");
       }
     } catch (err) {
-      console.error("Error fetching boards:", err);
+      console.error(err);
     }
-  };
+  }, []);
 
-  const fetchTasks = async (boardId) => {
+  const fetchTasks = useCallback(async (boardId) => {
     try {
       const data = await getTasks(boardId);
       setTasksByList(data);
     } catch (err) {
-      console.error("Error fetching tasks:", err);
+      console.error(err);
     }
-  };
+  }, []);
 
+  useEffect(() => {
+    fetchBoards();
+  }, [fetchBoards]);
+
+  // --- Socket Listeners ---
+  useEffect(() => {
+    const userId = localStorage.getItem("userId");
+    if (userId) socket.emit("registerUser", userId);
+
+    const handleBoardInvited = (newBoard) => {
+      setBoards((prev) =>
+        prev.some((b) => b._id === newBoard._id) ? prev : [...prev, newBoard]
+      );
+      socket.emit("joinBoard", newBoard._id);
+      if (!activeBoard) {
+        setActiveBoard(newBoard);
+        setLists(newBoard.lists || []);
+        fetchTasks(newBoard._id);
+      }
+    };
+
+    const handleTaskChanged = ({ type, task, taskId }) => {
+      console.log("[SOCKET EVENT] taskChanged:", type, taskId, task);
+
+      setTasksByList((prev) => {
+        const updated = { ...prev };
+
+        if (type === "created" && task) {
+          if (!updated[task.listId]) updated[task.listId] = [];
+          if (!updated[task.listId].some((t) => t._id === task._id))
+            updated[task.listId].push(task);
+        } else if (type === "updated" && task) {
+          // Remove task from all lists first (in case listId changed)
+          Object.keys(updated).forEach((lid) => {
+            updated[lid] = updated[lid].filter((t) => t._id !== task._id);
+          });
+
+          // Insert into the new list
+          if (!updated[task.listId]) updated[task.listId] = [];
+          updated[task.listId].splice(
+            task.position ?? updated[task.listId].length,
+            0,
+            task
+          );
+        } else if (type === "deleted" && taskId) {
+          Object.keys(updated).forEach((lid) => {
+            updated[lid] = updated[lid].filter((t) => t._id !== taskId);
+          });
+        }
+
+        console.log("[UPDATED STATE]", updated);
+        return updated;
+      });
+    };
+
+    const handleListChanged = ({ type, list, listId }) => {
+      setLists((prev) => {
+        if (type === "created" && list) return [...prev, list];
+        if (type === "deleted" && listId)
+          return prev.filter((l) => l._id !== listId);
+        return prev;
+      });
+    };
+
+    socket.on("boardInvited", handleBoardInvited);
+    socket.on("taskChanged", handleTaskChanged);
+    socket.on("listChanged", handleListChanged);
+
+    return () => {
+      socket.off("boardInvited", handleBoardInvited);
+      socket.off("taskChanged", handleTaskChanged);
+      socket.off("listChanged", handleListChanged);
+    };
+  }, [activeBoard, fetchTasks]);
+
+  useEffect(() => {
+    if (!activeBoard) return;
+
+    // join only once when board changes
+    socket.emit("joinBoard", activeBoard._id);
+
+    setLists(activeBoard.lists || []);
+    fetchTasks(activeBoard._id);
+
+    const userId = localStorage.getItem("userId");
+    const membership = activeBoard.members?.find(
+      (m) => getMemberId(m) === userId
+    );
+    setActiveRole(membership?.role || "member");
+  }, [activeBoard]);
+
+  // --- Board / List Actions ---
   const handleCreateBoard = async () => {
     if (!newBoardName.trim()) return;
-    try {
-      const newBoard = await createBoard({ name: newBoardName });
-      setBoards([...boards, newBoard]);
-      setActiveBoard(newBoard);
-      setNewBoardName("");
-    } catch (err) {
-      console.error("Error creating board:", err);
-    }
+    const created = await createBoard({ name: newBoardName });
+    const populated = await getBoard(created._id);
+    setBoards((prev) => [...prev, populated]);
+    setActiveBoard(populated);
+    setNewBoardName("");
   };
 
   const handleDeleteBoard = async (boardId) => {
-    try {
-      await deleteBoard(boardId);
-      setBoards(boards.filter((b) => b._id !== boardId));
-      if (activeBoard && activeBoard._id === boardId) {
-        setActiveBoard(null);
-      }
-      setDropdownOpen(false);
-    } catch (err) {
-      console.error("Error deleting board:", err);
-    }
+    await deleteBoard(boardId);
+    setBoards((prev) => prev.filter((b) => b._id !== boardId));
+    if (activeBoard?._id === boardId) setActiveBoard(null);
   };
 
-  const moveCard = async (cardId, fromCol, toCol) => {
+  const handleExitBoard = async (boardId) => {
+    await exitBoard(boardId);
+    setBoards((prev) => prev.filter((b) => b._id !== boardId));
+    setActiveBoard(null);
+  };
+
+  const handleAddList = async () => {
+    if (!newListName.trim() || !activeBoard) return;
+    await addList(activeBoard._id, newListName);
+    setNewListName("");
+  };
+
+  const handleDeleteList = async (listId) => {
     if (!activeBoard) return;
-    try {
-      if (fromCol !== toCol) {
-        const newPosition = tasksByList[toCol]?.length || 0;
-        await updateTask(activeBoard._id, cardId, {
-          listId: toCol,
-          position: newPosition,
-        });
-        // emit so others see update
-        socket.emit("taskChanged", {
-          boardId: activeBoard._id,
-          type: "updated",
-          taskId: cardId,
-        });
-        await fetchTasks(activeBoard._id);
-      }
-    } catch (error) {
-      console.error("Error moving card:", error);
+    await deleteList(activeBoard._id, listId);
+  };
+
+  const handleInviteUser = async () => {
+    if (!activeBoard || !inviteEmail.trim()) return;
+    await inviteUser(activeBoard._id, inviteEmail);
+    setInviteEmail("");
+  };
+
+  // --- Task Actions ---
+  const handleSaveTask = async (taskData) => {
+    if (!activeBoard) return;
+    const payload = {
+      ...taskData,
+      listId: editingTask ? editingTask.listId : modalList._id,
+    };
+
+    if (editingTask) {
+      await updateTask(activeBoard._id, editingTask._id, payload);
+    } else {
+      await createTask(activeBoard._id, payload);
     }
+
+    setModalOpen(false);
+    setEditingTask(null);
+    setModalList(null);
   };
 
   const handleDeleteTask = async (taskId) => {
     if (!activeBoard) return;
-    try {
-      await deleteTask(activeBoard._id, taskId);
-      socket.emit("taskChanged", {
-        boardId: activeBoard._id,
-        type: "deleted",
-        taskId,
-      });
-      await fetchTasks(activeBoard._id);
-    } catch (err) {
-      console.error("Error deleting task:", err);
-    }
+    await deleteTask(activeBoard._id, taskId);
   };
 
   const openTaskModal = (listId) => {
-    const listObj = lists.find((l) => l._id === listId);
-    setModalList(listObj || null);
+    setModalList(lists.find((l) => l._id === listId) || null);
     setEditingTask(null);
     setModalOpen(true);
   };
@@ -182,91 +226,69 @@ function Dashboard() {
     setModalOpen(true);
   };
 
-  const handleSaveTask = async (taskData) => {
+  // --- Task Move ---
+  const handleMoveTask = async (taskId, fromListId, toListId, toIndex = 0) => {
+    console.log("[MOVE TASK START]", { taskId, fromListId, toListId, toIndex });
+
     if (!activeBoard) return;
+
+    // --- Optimistic UI update ---
+    setTasksByList((prev) => {
+      const updated = { ...prev };
+
+      // Find the task
+      const task = updated[fromListId]?.find((t) => t._id === taskId);
+      if (!task) return prev;
+
+      // Remove from old list
+      updated[fromListId] = updated[fromListId].filter((t) => t._id !== taskId);
+
+      // Prepare updated task
+      const movedTask = { ...task, listId: toListId, position: toIndex };
+
+      // Insert at target index
+      const newList = [...(updated[toListId] || [])];
+      newList.splice(toIndex, 0, movedTask);
+      updated[toListId] = newList;
+
+      return updated;
+    });
+
     try {
-      const payload = {
-        ...taskData,
-        listId: editingTask ? editingTask.listId : modalList._id,
-      };
-      if (editingTask) {
-        const updated = await updateTask(
-          activeBoard._id,
-          editingTask._id,
-          payload
-        );
-        socket.emit("taskChanged", {
-          boardId: activeBoard._id,
-          type: "updated",
-          task: updated,
-        });
-      } else {
-        const created = await createTask(activeBoard._id, payload);
-        socket.emit("taskChanged", {
-          boardId: activeBoard._id,
-          type: "created",
-          task: created,
-        });
-      }
-      await fetchTasks(activeBoard._id);
-      setModalOpen(false);
-      setEditingTask(null);
-      setModalList(null);
+      // --- Persist on server ---
+      await updateTask(activeBoard._id, taskId, {
+        listId: toListId,
+        position: toIndex,
+      });
+      // Socket will later confirm & sync the final state
     } catch (err) {
-      console.error("Error saving task:", err);
+      console.error("[MOVE TASK ERROR]", err);
+      // Rollback if API fails
+      fetchTasks(activeBoard._id);
     }
   };
 
-  const handleAddList = async () => {
-    if (!newListName.trim() || !activeBoard) return;
-    const newList = await addList(activeBoard._id, newListName);
-    setLists([...lists, newList]);
-    setNewListName("");
-  };
-
-  const handleInviteUser = async () => {
-    if (!activeBoard || !inviteEmail.trim()) return;
-    try {
-      await inviteUser(activeBoard._id, inviteEmail);
-      alert("User invited successfully!");
-      setInviteEmail("");
-    } catch (err) {
-      console.error("Error inviting user:", err);
-      alert(err.message || "Failed to invite user");
-    }
-  };
-
-  const handleDeleteList = async (listId) => {
-    if (!activeBoard) return;
-    try {
-      await deleteList(activeBoard._id, listId);
-      setLists(lists.filter((l) => l._id !== listId));
-    } catch (err) {
-      console.error("Error deleting list:", err);
-    }
-  };
-
+  // --- Render ---
   return (
     <div className="h-screen flex flex-col bg-gray-100">
       <Navbar
         newBoardName={newBoardName}
         setNewBoardName={setNewBoardName}
         handleCreateBoard={handleCreateBoard}
-        isAdmin={activeRole === "admin" || activeRole === "basic"}
+        isAdmin={activeRole === "admin" || boards.length === 0}
       />
 
-      <main className="flex-1 p-4 bg-cover bg-center bg-blue-900 overflow-x-auto relative">
+      <main className="flex-1 p-4 bg-blue-900 overflow-x-auto">
         {activeBoard ? (
           <div className="flex flex-col gap-6">
             <BoardDropdown
               activeBoard={activeBoard}
-              dropdownOpen={dropdownOpen}
-              setDropdownOpen={setDropdownOpen}
-              handleDeleteBoard={handleDeleteBoard}
               inviteEmail={inviteEmail}
               setInviteEmail={setInviteEmail}
               handleInviteUser={handleInviteUser}
               isAdmin={activeRole === "admin"}
+              handleDeleteBoard={handleDeleteBoard}
+              handleExitBoard={handleExitBoard}
             />
 
             <div className="flex items-start gap-4 w-max">
@@ -275,7 +297,7 @@ function Dashboard() {
                   key={list._id}
                   title={list.name}
                   cards={tasksByList[list._id] || []}
-                  moveCard={moveCard}
+                  moveCard={handleMoveTask}
                   onAddCard={openTaskModal}
                   col={list._id}
                   onDeleteTask={handleDeleteTask}
@@ -284,7 +306,7 @@ function Dashboard() {
                 />
               ))}
 
-              {(activeRole === "admin" || activeRole === "basic") && (
+              {(activeRole === "admin" || activeRole === "member") && (
                 <div className="w-72 bg-gray-200 rounded-md shadow flex flex-col items-center justify-center p-4">
                   <input
                     type="text"
@@ -315,7 +337,7 @@ function Dashboard() {
         onClose={() => setModalOpen(false)}
         onSave={handleSaveTask}
         defaultStatus="To Do"
-        task={editingTask}
+        task={editingTask || null}
       />
     </div>
   );

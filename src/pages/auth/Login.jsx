@@ -5,21 +5,21 @@ import { loginUser } from "../../api/api";
 function Login() {
   const navigate = useNavigate();
   const [formData, setFormData] = useState({ email: "", password: "" });
-  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
 
   const handleChange = (e) =>
     setFormData({ ...formData, [e.target.name]: e.target.value });
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    setLoading(true);
     try {
-      const data = await loginUser(formData);
-      localStorage.setItem("token", data.token);
-      localStorage.setItem("userId", data.user._id);
-
-      navigate("/dashboard");
-    } catch (err) {
-      setError(err.message || "Login failed");
+      await loginUser(formData);
+      navigate("/dashboard"); // redirect after login
+    } catch (error) {
+      console.log(error);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -37,7 +37,7 @@ function Login() {
       {/* Right - Form */}
       <div className="flex flex-1 flex-col items-center justify-center bg-[#F9F6F3] px-6 py-12">
         <h2 className="text-3xl font-bold text-[#1C352D] mb-6">Sign In</h2>
-        {error && <p className="text-red-500 mb-3">{error}</p>}
+
         <form
           onSubmit={handleSubmit}
           className="w-full max-w-sm space-y-4 text-[#1C352D]"
@@ -46,23 +46,29 @@ function Login() {
             type="email"
             name="email"
             placeholder="Email"
+            value={formData.email}
             onChange={handleChange}
+            required
             className="w-full px-4 py-2 rounded-lg border border-[#A6B28B] focus:outline-none focus:ring-2 focus:ring-[#1C352D]"
           />
           <input
             type="password"
             name="password"
             placeholder="Password"
+            value={formData.password}
             onChange={handleChange}
+            required
             className="w-full px-4 py-2 rounded-lg border border-[#A6B28B] focus:outline-none focus:ring-2 focus:ring-[#1C352D]"
           />
           <button
             type="submit"
-            className="w-full py-2 bg-[#1C352D] text-[#F9F6F3] rounded-lg font-semibold hover:bg-[#A6B28B] hover:text-[#1C352D] transition"
+            disabled={loading}
+            className="w-full py-2 bg-[#1C352D] text-[#F9F6F3] rounded-lg font-semibold hover:bg-[#A6B28B] hover:text-[#1C352D] transition disabled:opacity-50"
           >
-            Login
+            {loading ? "Logging in..." : "Login"}
           </button>
         </form>
+
         <p className="mt-4 text-sm text-[#1C352D]">
           Don’t have an account?{" "}
           <Link
