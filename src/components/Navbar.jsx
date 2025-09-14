@@ -1,11 +1,19 @@
 import React from "react";
-import { FaPlus, FaBell, FaCog, FaUserCircle } from "react-icons/fa";
+import { FaPlus, FaBell, FaCog } from "react-icons/fa";
+import { useNavigate } from "react-router-dom";
 
 function Navbar({ newBoardName, setNewBoardName, handleCreateBoard, isAdmin }) {
+  const navigate = useNavigate();
+
   return (
     <header className="flex items-center justify-between px-6 py-3 bg-gray-900 text-white shadow">
       <div className="flex items-center gap-2">
-        <span className="font-bold text-xl tracking-wide">MyTrello</span>
+        <span
+          className="font-bold text-xl tracking-wide cursor-pointer"
+          onClick={() => navigate("/dashboard")}
+        >
+          MyTrello
+        </span>
       </div>
 
       {isAdmin && (
@@ -29,9 +37,14 @@ function Navbar({ newBoardName, setNewBoardName, handleCreateBoard, isAdmin }) {
       )}
 
       <div className="flex items-center gap-5">
-        <FaBell className="text-xl cursor-pointer hover:text-yellow-400" />
-        <FaCog className="text-xl cursor-pointer hover:text-blue-400" />
-        <FaUserCircle className="text-2xl cursor-pointer" />
+        <FaBell
+          onClick={() => navigate("/notifications")}
+          className="text-xl cursor-pointer hover:text-yellow-400"
+        />
+        {/* <FaCog
+          className="text-xl cursor-pointer hover:text-blue-400"
+          onClick={() => navigate("/settings")}
+        /> */}
       </div>
     </header>
   );

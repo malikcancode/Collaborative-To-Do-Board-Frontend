@@ -9,6 +9,7 @@ import ProtectedRoute from "./pages/auth/ProtectedRoute";
 import CreateBoard from "./pages/CreateBoard";
 import { DndProvider } from "react-dnd";
 import { HTML5Backend } from "react-dnd-html5-backend";
+import NotificationCenter from "./components/NotificationCenter";
 
 function App() {
   return (
@@ -33,6 +34,14 @@ function App() {
         element={
           <ProtectedRoute>
             <CreateBoard />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/notifications"
+        element={
+          <ProtectedRoute>
+            <NotificationCenter />
           </ProtectedRoute>
         }
       />

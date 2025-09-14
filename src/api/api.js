@@ -3,7 +3,7 @@ import axios from "axios";
 const API_BASE = "http://localhost:5000/api";
 
 // Helper: Get token from localStorage
-const getAuthHeader = () => {
+export const getAuthHeader = () => {
   const token = localStorage.getItem("token"); // token saved at login
   return token ? { Authorization: `Bearer ${token}` } : {};
 };
@@ -43,7 +43,7 @@ export const loginUser = async (credentials) => {
         const id = payload.id || payload.sub || payload.userId || payload.uid;
         if (id) localStorage.setItem("userId", id);
       } catch (e) {
-        // ignore decode errors
+        console.log(e);
       }
     }
 

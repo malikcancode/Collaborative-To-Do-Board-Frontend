@@ -31,6 +31,8 @@ function Dashboard() {
   const [newListName, setNewListName] = useState("");
   const [inviteEmail, setInviteEmail] = useState("");
   const [activeRole, setActiveRole] = useState("member");
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [saving, setSaving] = useState(false); // prevents duplicate submission
 
   const getMemberId = (m) =>
     m?.user?._id ? m.user._id.toString() : m.user?.toString();
@@ -65,7 +67,7 @@ function Dashboard() {
     fetchBoards();
   }, [fetchBoards]);
 
-  // --- Socket Listeners ---
+  // --- Socket Registration (run only once) ---
   useEffect(() => {
     const userId = localStorage.getItem("userId");
     if (userId) socket.emit("registerUser", userId);
@@ -83,8 +85,6 @@ function Dashboard() {
     };
 
     const handleTaskChanged = ({ type, task, taskId }) => {
-      console.log("[SOCKET EVENT] taskChanged:", type, taskId, task);
-
       setTasksByList((prev) => {
         const updated = { ...prev };
 
@@ -111,7 +111,6 @@ function Dashboard() {
           });
         }
 
-        console.log("[UPDATED STATE]", updated);
         return updated;
       });
     };
@@ -136,10 +135,11 @@ function Dashboard() {
     };
   }, [activeBoard, fetchTasks]);
 
+  // --- Handle active board changes ---
   useEffect(() => {
     if (!activeBoard) return;
 
-    // join only once when board changes
+    // Leave previous boards automatically
     socket.emit("joinBoard", activeBoard._id);
 
     setLists(activeBoard.lists || []);
@@ -176,8 +176,12 @@ function Dashboard() {
 
   const handleAddList = async () => {
     if (!newListName.trim() || !activeBoard) return;
-    await addList(activeBoard._id, newListName);
-    setNewListName("");
+    try {
+      await addList(activeBoard._id, newListName);
+      setNewListName("");
+    } catch (err) {
+      console.error("Error adding list:", err);
+    }
   };
 
   const handleDeleteList = async (listId) => {
@@ -193,21 +197,28 @@ function Dashboard() {
 
   // --- Task Actions ---
   const handleSaveTask = async (taskData) => {
-    if (!activeBoard) return;
+    if (!activeBoard || saving) return;
+
+    setSaving(true);
     const payload = {
       ...taskData,
       listId: editingTask ? editingTask.listId : modalList._id,
     };
 
-    if (editingTask) {
-      await updateTask(activeBoard._id, editingTask._id, payload);
-    } else {
-      await createTask(activeBoard._id, payload);
+    try {
+      if (editingTask) {
+        await updateTask(activeBoard._id, editingTask._id, payload);
+      } else {
+        await createTask(activeBoard._id, payload);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setSaving(false);
+      setModalOpen(false);
+      setEditingTask(null);
+      setModalList(null);
     }
-
-    setModalOpen(false);
-    setEditingTask(null);
-    setModalList(null);
   };
 
   const handleDeleteTask = async (taskId) => {
@@ -228,25 +239,17 @@ function Dashboard() {
 
   // --- Task Move ---
   const handleMoveTask = async (taskId, fromListId, toListId, toIndex = 0) => {
-    console.log("[MOVE TASK START]", { taskId, fromListId, toListId, toIndex });
-
     if (!activeBoard) return;
 
     // --- Optimistic UI update ---
     setTasksByList((prev) => {
       const updated = { ...prev };
-
-      // Find the task
       const task = updated[fromListId]?.find((t) => t._id === taskId);
       if (!task) return prev;
 
-      // Remove from old list
       updated[fromListId] = updated[fromListId].filter((t) => t._id !== taskId);
 
-      // Prepare updated task
       const movedTask = { ...task, listId: toListId, position: toIndex };
-
-      // Insert at target index
       const newList = [...(updated[toListId] || [])];
       newList.splice(toIndex, 0, movedTask);
       updated[toListId] = newList;
@@ -255,16 +258,13 @@ function Dashboard() {
     });
 
     try {
-      // --- Persist on server ---
       await updateTask(activeBoard._id, taskId, {
         listId: toListId,
         position: toIndex,
       });
-      // Socket will later confirm & sync the final state
     } catch (err) {
       console.error("[MOVE TASK ERROR]", err);
-      // Rollback if API fails
-      fetchTasks(activeBoard._id);
+      fetchTasks(activeBoard._id); // rollback
     }
   };
 
@@ -282,6 +282,8 @@ function Dashboard() {
         {activeBoard ? (
           <div className="flex flex-col gap-6">
             <BoardDropdown
+              dropdownOpen={dropdownOpen}
+              setDropdownOpen={setDropdownOpen}
               activeBoard={activeBoard}
               inviteEmail={inviteEmail}
               setInviteEmail={setInviteEmail}
