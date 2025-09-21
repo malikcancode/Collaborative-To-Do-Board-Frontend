@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom"; // import useNavigate
 import socket from "../api/socket";
 import { fetchNotifications, deleteNotification } from "../api/api";
+import { toast } from "react-toastify";
 
 function NotificationCenter() {
   const [notifications, setNotifications] = useState([]);
@@ -12,10 +13,18 @@ function NotificationCenter() {
     loadNotifications();
 
     const userId = localStorage.getItem("userId");
-    if (userId) socket.emit("registerUser", userId);
+    if (userId) {
+      socket.emit("registerUser", userId);
+    }
+
+    // Join all boards the user is a member of
+    const boards = JSON.parse(localStorage.getItem("boards") || "[]");
+    boards.forEach((b) => socket.emit("joinBoard", b._id));
 
     const handleReminder = (data) => {
+      console.log("[SOCKET REMINDER RECEIVED]", data);
       setNotifications((prev) => [data, ...prev]);
+      toast.info(`Reminder: ${data.title}`, { autoClose: 5000 });
     };
 
     socket.on("deadlineReminder", handleReminder);

@@ -4,4 +4,6 @@ const socket = io("http://localhost:5000", {
   withCredentials: true,
 });
 
+window.socket = socket;
+
 export default socket;
