@@ -224,3 +224,22 @@ export const exitBoard = async (boardId) => {
   });
   return response.data;
 };
+
+export const fetchNotifications = async () => {
+  const response = await axios.get(`${API_BASE}/notifications`, {
+    headers: getAuthHeader(),
+  });
+  return response.data;
+};
+
+// Delete notification
+export const deleteNotification = async (id) => {
+  try {
+    const response = await axios.delete(`${API_BASE}/notifications/${id}`, {
+      headers: getAuthHeader(),
+    });
+    return response.data;
+  } catch (error) {
+    throw error.response?.data || { message: "Failed to delete notification" };
+  }
+};

@@ -1,17 +1,15 @@
 import React, { useEffect, useState } from "react";
-import socket from "../api/socket"; // your socket instance
-import { getAuthHeader } from "../api/api";
-import axios from "axios";
-
-const API_BASE = "http://localhost:5000/api";
+import { useNavigate } from "react-router-dom"; // import useNavigate
+import socket from "../api/socket";
+import { fetchNotifications, deleteNotification } from "../api/api";
 
 function NotificationCenter() {
   const [notifications, setNotifications] = useState([]);
   const [selectedNotification, setSelectedNotification] = useState(null);
+  const navigate = useNavigate(); // navigation
 
   useEffect(() => {
-    // Fetch initial notifications
-    fetchNotifications();
+    loadNotifications();
 
     const userId = localStorage.getItem("userId");
     if (userId) socket.emit("registerUser", userId);
@@ -22,29 +20,20 @@ function NotificationCenter() {
 
     socket.on("deadlineReminder", handleReminder);
 
-    return () => {
-      socket.off("deadlineReminder", handleReminder);
-    };
+    return () => socket.off("deadlineReminder", handleReminder);
   }, []);
 
-  const fetchNotifications = async () => {
+  const loadNotifications = async () => {
     try {
-      const response = await axios.get(`${API_BASE}/notifications`, {
-        headers: getAuthHeader(),
-      });
-      setNotifications(response.data);
+      const data = await fetchNotifications();
+      setNotifications(data);
     } catch (err) {
       console.error("Failed to fetch notifications", err);
     }
   };
 
-  const markAsRead = async (id) => {
+  const handleMarkAsRead = async (id) => {
     try {
-      await axios.put(
-        `${API_BASE}/notifications/${id}/mark-read`,
-        {},
-        { headers: getAuthHeader() }
-      );
       setNotifications((prev) =>
         prev.map((n) => (n._id === id ? { ...n, read: true } : n))
       );
@@ -53,9 +42,27 @@ function NotificationCenter() {
     }
   };
 
+  const handleDelete = async (id) => {
+    try {
+      const data = await deleteNotification(id);
+      console.log("Deleted:", data);
+      setNotifications((prev) => prev.filter((n) => n._id !== id));
+    } catch (err) {
+      console.error("Failed to delete notification", err);
+    }
+  };
+
   return (
     <div className="p-6 bg-blue-900 min-h-screen w-full">
-      <div className="max-w-7xl mx-auto">
+      <div className="max-w-7xl mx-auto relative">
+        {/* Back button */}
+        <button
+          onClick={() => navigate(-1)}
+          className="absolute top-0 right-0 mt-2 mr-2 px-4 py-2 bg-gray-200 text-gray-800 rounded hover:bg-gray-300 transition"
+        >
+          ← Back
+        </button>
+
         <h2 className="text-2xl font-bold text-white mb-4">Notifications</h2>
 
         {notifications.length === 0 && (
@@ -67,39 +74,44 @@ function NotificationCenter() {
             <li
               key={n._id}
               onClick={() => setSelectedNotification(n)}
-              className={`rounded-xl shadow-md p-4 flex justify-between items-start w-full cursor-pointer transition ${
-                n.read ? "bg-gray-100" : "bg-white hover:bg-gray-50"
-              }`}
+              className={`rounded-xl shadow-md p-4 flex justify-between items-start w-full cursor-pointer transition
+        ${n.read ? "bg-gray-200 text-gray-700" : "bg-white hover:bg-gray-50"}`}
             >
-              <div>
+              <div className="flex-1">
                 <p className="font-semibold text-gray-900">{n.title}</p>
-
-                {/* ✅ show description if exists */}
-                {/* {n.description && (
-                  <p className="text-gray-700 text-sm">{n.description}</p>
-                )} */}
                 <p
-                  className="text-gray-600 text-sm"
+                  className="text-gray-600 text-sm mt-1"
                   dangerouslySetInnerHTML={{ __html: n.message }}
                 />
-
                 {n.deadline && (
                   <span className="text-sm text-gray-500 block mt-1">
-                    Deadline: {new Date(n.deadline).toLocaleString()}
+                    ⏰ Deadline: {new Date(n.deadline).toLocaleString()}
                   </span>
                 )}
               </div>
-              {!n.read && (
+
+              <div className="flex flex-col items-end space-y-2 ml-4">
+                {!n.read && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleMarkAsRead(n._id);
+                    }}
+                    className="px-3 py-1 text-xs bg-blue-500 text-white rounded hover:bg-blue-600 transition"
+                  >
+                    Mark as Read
+                  </button>
+                )}
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
-                    markAsRead(n._id);
+                    handleDelete(n._id);
                   }}
-                  className="ml-4 px-3 py-1 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
+                  className="px-3 py-1 text-xs bg-red-500 text-white rounded hover:bg-red-600 transition"
                 >
-                  Mark Read
+                  Delete
                 </button>
-              )}
+              </div>
             </li>
           ))}
         </ul>
@@ -113,7 +125,6 @@ function NotificationCenter() {
               {selectedNotification.title}
             </h3>
 
-            {/* ✅ show description inside modal */}
             {selectedNotification.description && (
               <p className="text-gray-800 mb-3">
                 {selectedNotification.description}
@@ -122,9 +133,7 @@ function NotificationCenter() {
 
             <p
               className="text-gray-700 mb-3"
-              dangerouslySetInnerHTML={{
-                __html: selectedNotification.message,
-              }}
+              dangerouslySetInnerHTML={{ __html: selectedNotification.message }}
             />
             {selectedNotification.deadline && (
               <p className="text-sm text-gray-600">

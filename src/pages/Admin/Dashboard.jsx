@@ -18,6 +18,7 @@ import Navbar from "../../components/Navbar";
 import Column from "../../components/Column";
 import BoardDropdown from "../../components/BoardDropdown";
 import socket from "../../api/socket";
+import { toast } from "react-toastify";
 
 function Dashboard() {
   const [boards, setBoards] = useState([]);
@@ -32,7 +33,8 @@ function Dashboard() {
   const [inviteEmail, setInviteEmail] = useState("");
   const [activeRole, setActiveRole] = useState("member");
   const [dropdownOpen, setDropdownOpen] = useState(false);
-  const [saving, setSaving] = useState(false); // prevents duplicate submission
+  const [saving, setSaving] = useState(false);
+  const [boardError, setBoardError] = useState("");
 
   const getMemberId = (m) =>
     m?.user?._id ? m.user._id.toString() : m.user?.toString();
@@ -153,14 +155,48 @@ function Dashboard() {
   }, [activeBoard]);
 
   // --- Board / List Actions ---
+
+  // --- In handleCreateBoard ---
   const handleCreateBoard = async () => {
     if (!newBoardName.trim()) return;
-    const created = await createBoard({ name: newBoardName });
-    const populated = await getBoard(created._id);
-    setBoards((prev) => [...prev, populated]);
-    setActiveBoard(populated);
-    setNewBoardName("");
+
+    try {
+      const created = await createBoard({ name: newBoardName });
+      const populated = await getBoard(created._id);
+
+      setBoards((prev) => [...prev, populated]);
+      setActiveBoard(populated);
+      setNewBoardName("");
+
+      toast.success("Board created successfully!"); // ✅ success toast
+    } catch (err) {
+      console.error(err);
+
+      let message = "Failed to create board"; // default
+      if (err.response?.data?.message) {
+        message = err.response.data.message;
+      } else if (err.message) {
+        message = err.message;
+      }
+
+      toast.error(message); // ✅ error toast
+    }
   };
+
+  useEffect(() => {
+    const handleBoardDeleted = ({ boardId }) => {
+      setBoards((prev) => prev.filter((b) => b._id !== boardId));
+
+      // If the deleted board was active, remove it
+      if (activeBoard?._id === boardId) setActiveBoard(null);
+    };
+
+    socket.on("boardDeleted", handleBoardDeleted);
+
+    return () => {
+      socket.off("boardDeleted", handleBoardDeleted);
+    };
+  }, [activeBoard]);
 
   const handleDeleteBoard = async (boardId) => {
     await deleteBoard(boardId);
@@ -278,6 +314,12 @@ function Dashboard() {
         isAdmin={activeRole === "admin" || boards.length === 0}
       />
 
+      {boardError && (
+        <div className="fixed top-4 right-4 bg-red-600 text-white px-4 py-2 rounded shadow z-50">
+          {boardError}
+        </div>
+      )}
+
       <main className="flex-1 p-4 bg-blue-900 overflow-x-auto">
         {activeBoard ? (
           <div className="flex flex-col gap-6">
@@ -309,17 +351,17 @@ function Dashboard() {
               ))}
 
               {(activeRole === "admin" || activeRole === "member") && (
-                <div className="w-72 bg-gray-200 rounded-md shadow flex flex-col items-center justify-center p-4">
+                <div className="w-72 bg-gray-200  shadow flex flex-col items-center justify-center p-4">
                   <input
                     type="text"
                     value={newListName}
                     onChange={(e) => setNewListName(e.target.value)}
                     placeholder="List name"
-                    className="mb-2 px-2 py-1 rounded border w-full"
+                    className="mb-2 px-2 py-1 border w-full"
                   />
                   <button
                     onClick={handleAddList}
-                    className="bg-blue-600 text-white px-3 py-1 rounded w-full"
+                    className="bg-blue-600 text-white px-3 py-1 w-full"
                   >
                     + Add another list
                   </button>
