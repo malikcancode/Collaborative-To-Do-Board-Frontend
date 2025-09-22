@@ -12,6 +12,8 @@ import {
   exitBoard,
   inviteUser,
   deleteBoard,
+  assignTask,
+  completeTask,
 } from "../../api/api";
 import TaskModal from "../../components/TaskModal";
 import Navbar from "../../components/Navbar";
@@ -35,6 +37,49 @@ function Dashboard() {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [boardError, setBoardError] = useState("");
+  const [reminders, setReminders] = useState([]);
+
+  const handleAssignTask = async (taskId, userId) => {
+    if (!activeBoard) return;
+
+    try {
+      const updatedTask = await assignTask(activeBoard._id, taskId, userId);
+      setTasksByList((prev) => {
+        const updated = { ...prev };
+        Object.keys(updated).forEach((listId) => {
+          updated[listId] = updated[listId].map((t) =>
+            t._id === taskId ? { ...t, assignedTo: userId } : t
+          );
+        });
+        return updated;
+      });
+      toast.success("Task assigned successfully!");
+    } catch (err) {
+      console.error("Assignment error:", err);
+      toast.error("Failed to assign task");
+    }
+  };
+
+  const handleCompleteTask = async (taskId) => {
+    if (!activeBoard) return;
+
+    try {
+      await completeTask(activeBoard._id, taskId);
+      // setTasksByList((prev) => {
+      //   const updated = { ...prev };
+      //   Object.keys(updated).forEach((listId) => {
+      //     updated[listId] = updated[listId].map((t) =>
+      //       t._id === taskId ? { ...t, completed: true } : t
+      //     );
+      //   });
+      //   return updated;
+      // });
+      toast.success("Task marked as completed!");
+    } catch (err) {
+      console.error("Complete task error:", err);
+      toast.error("Failed to complete task");
+    }
+  };
 
   const getMemberId = (m) =>
     m?.user?._id ? m.user._id.toString() : m.user?.toString();
@@ -71,8 +116,32 @@ function Dashboard() {
 
   // --- Socket Registration (run only once) ---
   useEffect(() => {
+    if (!socket) return;
     const userId = localStorage.getItem("userId");
     if (userId) socket.emit("registerUser", userId);
+
+    const handleReminder = (data) => {
+      setReminders((prev) => {
+        // ✅ Avoid duplicates by task id
+        if (prev.some((r) => r._id === data._id)) return prev;
+        return [data, ...prev];
+      });
+      toast.info(`Reminder: ${data.title}`, { autoClose: 5000 });
+    };
+
+    const handleTaskCompleted = (completedTask) => {
+      setTasksByList((prev) => {
+        const updated = { ...prev };
+        Object.keys(updated).forEach((listId) => {
+          updated[listId] = updated[listId].map((t) =>
+            t._id === completedTask._id ? { ...t, completed: true } : t
+          );
+        });
+        return updated;
+      });
+
+      toast.success(`Task completed: ${completedTask.title}`);
+    };
 
     const handleBoardInvited = (newBoard) => {
       setBoards((prev) =>
@@ -129,13 +198,17 @@ function Dashboard() {
     socket.on("boardInvited", handleBoardInvited);
     socket.on("taskChanged", handleTaskChanged);
     socket.on("listChanged", handleListChanged);
+    socket.on("deadlineReminder", handleReminder);
+    socket.on("taskCompleted", handleTaskCompleted);
 
     return () => {
+      socket.off("taskCompleted", handleTaskCompleted);
       socket.off("boardInvited", handleBoardInvited);
       socket.off("taskChanged", handleTaskChanged);
       socket.off("listChanged", handleListChanged);
+      socket.off("deadlineReminder", handleReminder);
     };
-  }, [activeBoard, fetchTasks]);
+  }, []);
 
   // --- Handle active board changes ---
   useEffect(() => {
@@ -347,6 +420,8 @@ function Dashboard() {
                   onDeleteTask={handleDeleteTask}
                   onEditTask={openEditModal}
                   onDeleteList={handleDeleteList}
+                  onAssignTask={handleAssignTask}
+                  onCompleteTask={handleCompleteTask}
                 />
               ))}
 

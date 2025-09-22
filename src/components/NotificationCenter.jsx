@@ -78,7 +78,7 @@ function NotificationCenter() {
           <p className="text-gray-200 text-center">No notifications</p>
         )}
 
-        <ul className="space-y-3">
+        <ul className="space-y-3 relative mt-10">
           {notifications.map((n) => (
             <li
               key={n._id}

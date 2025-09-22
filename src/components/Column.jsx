@@ -1,6 +1,6 @@
-import React, { useRef } from "react";
+import React, { useRef, useState } from "react";
 import { useDrop } from "react-dnd";
-import { FaPlus, FaTrash } from "react-icons/fa";
+import { FaPlus, FaTrash, FaCheck } from "react-icons/fa";
 import Card from "./Card";
 
 const ItemTypes = { CARD: "card" };
@@ -14,23 +14,22 @@ function Column({
   onDeleteTask,
   onEditTask,
   onDeleteList,
+  onAssignTask, // new
+  onCompleteTask, // new
+  members = [], // optional: list of board members for assignment
 }) {
   const dropRef = useRef(null);
+  const [assigningTaskId, setAssigningTaskId] = useState(null);
 
   const [, drop] = useDrop(() => ({
     accept: ItemTypes.CARD,
     drop: (item, monitor) => {
-      console.log("Dropped card:", item.id, "from:", item.fromCol, "to:", col);
-
-      let toIndex = cards.length; // default append at end
-
+      let toIndex = cards.length;
       const clientOffset = monitor.getClientOffset();
       const dropContainer = dropRef.current;
 
       if (clientOffset && dropContainer) {
         const containerTop = dropContainer.getBoundingClientRect().top;
-
-        // y position of cursor relative to column
         const dropY = clientOffset.y - containerTop;
 
         for (let i = 0; i < cards.length; i++) {
@@ -38,7 +37,6 @@ function Column({
           if (cardElement) {
             const { top, height } = cardElement.getBoundingClientRect();
             const relativeY = top - containerTop;
-
             if (dropY < relativeY + height / 2) {
               toIndex = i;
               break;
@@ -57,6 +55,13 @@ function Column({
   }));
 
   drop(dropRef);
+
+  // --- Task Assignment Dropdown ---
+  const handleAssignChange = (taskId, e) => {
+    const userId = e.target.value;
+    if (userId) onAssignTask(taskId, userId);
+    setAssigningTaskId(null);
+  };
 
   return (
     <div
@@ -79,14 +84,32 @@ function Column({
       <div className="flex-1 px-3 pb-2 space-y-2 overflow-y-auto">
         {cards.length > 0 ? (
           cards.map((card) => (
-            <Card
-              key={card._id}
-              card={card}
-              col={col}
-              onDelete={onDeleteTask}
-              onEdit={onEditTask}
-              id={`card-${card._id}`} // 👈 needed for measuring
-            />
+            <div key={card._id} className="relative">
+              <Card
+                card={card}
+                col={col}
+                onDelete={onDeleteTask}
+                onEdit={onEditTask}
+                onComplete={onCompleteTask} // pass the handler here
+                id={`card-${card._id}`}
+              />
+
+              {/* Assign Dropdown */}
+              {onAssignTask && members.length > 0 && (
+                <select
+                  className="absolute bottom-1 left-1 text-black text-xs"
+                  value={card.assignedTo || ""}
+                  onChange={(e) => handleAssignChange(card._id, e)}
+                >
+                  <option value="">Assign...</option>
+                  {members.map((m) => (
+                    <option key={m._id} value={m._id}>
+                      {m.user?.username || m.username || "Unknown"}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
           ))
         ) : (
           <p className="text-xs text-gray-400 italic">No tasks</p>

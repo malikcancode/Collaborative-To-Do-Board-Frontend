@@ -243,3 +243,33 @@ export const deleteNotification = async (id) => {
     throw error.response?.data || { message: "Failed to delete notification" };
   }
 };
+
+// ---------------- TASK ASSIGNMENT ----------------
+
+// Assign a task to a member
+export const assignTask = async (boardId, taskId, userId) => {
+  try {
+    const response = await axios.put(
+      `${API_BASE}/boards/${boardId}/tasks/${taskId}`,
+      { assignedTo: userId },
+      { headers: getAuthHeader() }
+    );
+    return response.data;
+  } catch (error) {
+    throw error.response?.data || { message: "Task assignment failed" };
+  }
+};
+
+// Mark a task as completed
+export const completeTask = async (boardId, taskId) => {
+  try {
+    const response = await axios.post(
+      `${API_BASE}/boards/${boardId}/tasks/${taskId}/complete`,
+      {}, // no body needed
+      { headers: getAuthHeader() }
+    );
+    return response.data;
+  } catch (error) {
+    throw error.response?.data || { message: "Completing task failed" };
+  }
+};
